@@ -3,6 +3,7 @@ from abc import ABCMeta, abstractmethod
 import scipy.stats as stats
 from scipy.special import expit, logit
 import sys
+import unittest
 
 class AbstractScoreMatrix(object):
     """A rater-by-answer matrix of scores for answers to the question.
@@ -44,7 +45,8 @@ class AbstractScoreMatrix(object):
         m = len(subset["answers"]["data"])
         
         # if no answers have been rated, or no raters have rated anything
-        if (m < 1 or len(subset["raters"]["data"]) < 1) or np.all(self.matrix == -1):
+        if ((m < 1 or len(subset["raters"]["data"]) < 1) or 
+                                 np.all(self.matrix == -1)):
             return np.zeros((self.matrix.shape[1]))
         
         score_mat = self.matrix[subset['raters']['data'][:,None], 
@@ -64,13 +66,15 @@ class AbstractScoreMatrix(object):
                 # count up the number of "wins" and "losses", divide by number 
                 # of users who have rated both items. 
                 if np.any(both_rated):
-                    num_pairs = sum(both_rated)
+                    num_raters = sum(both_rated)
                     both_rated = np.where(both_rated)
                     
-                    wins = np.sum(score_mat[both_rated, i] > score_mat[both_rated, j]) 
-                    losses = np.sum(score_mat[both_rated, j] > score_mat[both_rated, i]) 
-                    kmat[i,j] = (wins - losses) / num_pairs
-                    kmat[j,i] = (losses - wins) / num_pairs
+                    wins = np.sum(score_mat[both_rated, i] > \
+                                  score_mat[both_rated, j]) 
+                    losses = np.sum(score_mat[both_rated, j] > \
+                                    score_mat[both_rated, i]) 
+                    kmat[i,j] = (wins - losses) / num_raters
+                    kmat[j,i] = (losses - wins) / num_raters
                 
         # sum up the pairwise differences
         rvec = np.sum(kmat,axis=1)/m
@@ -93,22 +97,25 @@ class AbstractScoreMatrix(object):
         test_tau, test_p_value = stats.kendalltau(anca_vec, num_ratings)
         
         # Conditions to exclude:
-        # If either vector is all the same value (e.g. [2,2,2]), the test returns nan.
-        # If the test is not statistically significant (because of, e.g., small number 
-        # of answers or ratings), we don't want to add a bonus.
-        # If the correlation is significant but negative I assume it is a false positive.
+        # If either vector is all the same value (e.g. [2,2,2]), test_tau is nan
+        # If the test is not statistically significant (because of, e.g., small 
+        # number of answers or ratings), we don't want to add a bonus.
+        # If the correlation is significant but negative I assume it is a false 
+        # positive.
         
         if not np.isnan(test_tau) and (test_p_value < 0.05 and test_tau > 0):
-            # start by normalizing the score vector so that values are between 0 and 1
+            # normalize the score vector so values are between 0 & 1
             svec = anca_vec - np.min(anca_vec)
-            svec = svec / float(np.max(svec))
+            if np.max(svec) != 0:
+                svec = svec / float(np.max(svec))
             
-            # normalize the count of ratings per answer so values are between 0 and 1
+            # normalize count of ratings per answer so values are between 0 & 1
             rvec = num_ratings - np.min(num_ratings)
-            rvec = rvec / float(np.max(rvec))
+            if np.max(rvec) != 0:
+                rvec = rvec / float(np.max(rvec))
 
-            # Add a bonus for number of ratings to the score vector. The size 
-            # of the bonus is weighted by the correlation between the two vectors.
+            # Add a bonus for number of ratings to the score vector. The size of
+            # the bonus is weighted by the correlation between the two vectors.
             wvec = svec + (rvec * test_tau)
             
         else:
@@ -117,7 +124,8 @@ class AbstractScoreMatrix(object):
         # reweight so scores look more intuitive 
         # (note that this doesn't change the ordering!)
         wvec = wvec - np.min(wvec) + 0.15 * np.mean(wvec)
-        wvec = (wvec / (np.max(wvec) + 0.15 * np.mean(wvec)))
+        if (np.max(wvec) + 0.15 * np.mean(wvec)) != 0:
+            wvec = (wvec / (np.max(wvec) + 0.15 * np.mean(wvec)))
         
         return wvec
 
@@ -148,11 +156,31 @@ def test_init():
     assert(np.allclose(test_sm.lizzie, 
         np.array([ 0.26623639,  0.91165793,  0.58894716])))
 
+def test_nodata():
+    a = np.array([[-1, -1, -1],
+                  [-1, -1, -1],
+                  [-1, -1, -1]])
+
+    test_sm = ScoreMatrix(a)
+    assert(np.array_equal(test_sm.lizzie, 
+        np.array([ 0., 0., 0.])))
+
+def test_all_equal():
+    a = np.array([[1, 1, 1, 1],
+                  [2, 2, 2, 2],
+                  [3, 3, 3, 3]])
+
+    test_sm = ScoreMatrix(a)
+    val = test_sm.lizzie[0]
+    assert(np.all(test_sm.lizzie == val))
+
 
 ################################################################################
 # MAIN
 def main(argv):
     test_init()
+    test_nodata()
+    test_all_equal()
 
 if __name__ == "__main__":
     main(sys.argv)
