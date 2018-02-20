@@ -121,11 +121,41 @@ class AbstractScoreMatrix(object):
         else:
             wvec = anca_vec
         
-        # reweight so scores look more intuitive 
-        # (note that this doesn't change the ordering!)
-        wvec = wvec - np.min(wvec) + 0.15 * np.mean(wvec)
-        if (np.max(wvec) + 0.15 * np.mean(wvec)) != 0:
-            wvec = (wvec / (np.max(wvec) + 0.15 * np.mean(wvec)))
+        # now we pin the lowest score to the lowest average rating, and the
+        # highest score to the highest average rating, so the numbers look
+        # about right to the users:
+
+        # 1. start by calculating the average rating of each response:
+        # a. sum of all ratings
+        newmat = self.matrix.copy()
+        newmat[newmat == -1] = 0
+        numerator = np.sum(newmat, axis = 0)
+        
+        # b. number of ratings received
+        denominator = np.sum(self.matrix != -1, axis = 0)
+        
+        # c. divide to get the average ratings (subset by "hasrating" to avoid div by 0)
+        hasrating = np.where(np.logical_not(np.all(self.matrix == -1, axis=0)))[0]
+        averages = numerator[hasrating] / denominator[hasrating]
+        
+        # 2. find the highest and lowest values, if they exist; else set to 0
+        if len(averages) > 0:
+            low_score = np.min(averages)
+            high_score = np.max(averages)
+        else:
+            low_score = 0
+            high_score = 0
+        
+        # 3. finally, reweight so scores look more intuitive 
+        # a. set the min to 0
+        wvec = wvec - np.min(wvec)
+
+        # b. set the max to high_score - low_score, if that is not 0
+        if (np.max(wvec) != 0) & ((high_score - low_score) != 0):
+            wvec = (wvec / np.max(wvec)) * (high_score - low_score)
+
+        # c. shift everything up by low_score
+        wvec = wvec + low_score
         
         return wvec
 
@@ -154,7 +184,7 @@ def test_init():
 
     test_sm = ScoreMatrix(a)
     assert(np.allclose(test_sm.lizzie, 
-        np.array([ 0.26623639,  0.91165793,  0.58894716])))
+        np.array([0.33333333,  0.59,        0.46166667])))
 
 def test_nodata():
     a = np.array([[-1, -1, -1],
@@ -174,6 +204,15 @@ def test_all_equal():
     val = test_sm.lizzie[0]
     assert(np.all(test_sm.lizzie == val))
 
+def test_chris():
+    a = np.array([[35, 10, 32, 68, 50, 68, 19, 56.4, 50., 68],
+                  [10, 22,  -1, -1, -1, -1, -1, -1, -1, -1]])
+
+    test_sm = ScoreMatrix(a)
+    assert(np.allclose(test_sm.lizzie, 
+        np.array([29.86666667, 16., 26.4, 68., 43.73333333, 68.,
+                  19.46666667, 54.13333333, 43.73333333, 68.])))
+
 
 ################################################################################
 # MAIN
@@ -181,6 +220,8 @@ def main(argv):
     test_init()
     test_nodata()
     test_all_equal()
+    test_chris()
+
 
 if __name__ == "__main__":
     main(sys.argv)
